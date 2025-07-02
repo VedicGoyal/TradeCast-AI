@@ -1,5 +1,5 @@
 # 📈 TradeCast AI  
-*A Deep Learning Stock Forecaster & Strategy Simulator*
+*An intelligent full-stack AI trading assistant, stock market forecasting and strategy simulation tool powered by deep learning and technical indicators.*
 
 This project has been developed with the intent of applying deep learning techniques to forecast stock market prices and simulate trading strategies based on model predictions. 
 The core objective is to bridge financial domain knowledge with modern AI methodologies to assess the practical effectiveness of predictive models in real-time trading environments.
@@ -14,7 +14,7 @@ The core objective is to bridge financial domain knowledge with modern AI method
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/VedicGoyal/TradeCast-AI/main/icon/tradecast.png" width="500" alt="TradeCast AI Logo"/>
+  <img src="https://raw.githubusercontent.com/VedicGoyal/TradeCast-AI/main/icon/tradecast.png" width="400" alt="TradeCast AI Logo"/>
 </p>
 
 ---
@@ -23,6 +23,8 @@ The core objective is to bridge financial domain knowledge with modern AI method
 
 👉 [**Try the app now**](https://tradecast-ai.streamlit.app/)  
 No setup needed — fully hosted on Streamlit Cloud.
+
+👉 [Having trouble? Checkout the walkthrough video](https://youtu.be/ufzhG1BZLcQ?si=tzVyx4mTHD3PI-jk)
 
 ---
 
@@ -97,6 +99,15 @@ streamlit run app1.py
 
 ## 👨‍💻 Contributors
 
+Created by:
+1. **Vedic Goyal**  
+GitHub: [@VedicGoyal](https://github.com/VedicGoyal)
+
+2. **Vaibhav Singh**  
+GitHub: [@VedicGoyal](https://github.com/VedicGoyal)
+
+3. **Yug Malviya**  
+GitHub: [@yug-6268](https://github.com/yug-6268)
 
 ---
 
