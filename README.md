@@ -24,7 +24,7 @@ The core objective is to bridge financial domain knowledge with modern AI method
 👉 [**Try the app now**](https://tradecast-ai.streamlit.app/)  
 No setup needed — fully hosted on Streamlit Cloud.
 
-👉 [Having trouble? Checkout the walkthrough video](https://youtu.be/ufzhG1BZLcQ?si=tzVyx4mTHD3PI-jk)
+👉 [Checkout the walkthrough video here.](https://youtu.be/ufzhG1BZLcQ?si=tzVyx4mTHD3PI-jk)
 
 ---
 
