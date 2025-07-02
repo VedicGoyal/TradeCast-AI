@@ -1,10 +1,11 @@
 streamlit
-numpy
 pandas
+numpy
 matplotlib
 scikit-learn
-tensorflow
+tensorflow==2.14.0
+ml_dtypes==0.2.0
 xgboost
 yfinance
-joblib
 ta
+joblib
