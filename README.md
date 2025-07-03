@@ -104,7 +104,7 @@ Created by:
 GitHub: [@VedicGoyal](https://github.com/VedicGoyal)
 
 2. **Vaibhav Singh**  
-GitHub: [@VedicGoyal](https://github.com/VedicGoyal)
+GitHub: [@Vaibhav3216](https://github.com/Vaibhav3216)
 
 3. **Yug Malviya**  
 GitHub: [@yug-6268](https://github.com/yug-6268)
