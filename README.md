@@ -75,6 +75,11 @@ source venv/bin/activate      # Windows: venv\Scripts\activate
 ```bash
 pip install -r requirements.txt
 ```
+### 4. Run the finbert_Load.py
+
+```bash
+python run finbert_Load.py
+```
 
 ### 4. Run the Streamlit App
 
