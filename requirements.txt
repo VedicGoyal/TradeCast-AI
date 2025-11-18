@@ -9,3 +9,4 @@ xgboost
 yfinance
 ta
 joblib
+transformers
