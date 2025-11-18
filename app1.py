@@ -19,6 +19,9 @@ import joblib
 import random
 import os
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from datetime import date
+import time
+import requests
 
 # === SESSION STATE INITIALIZATION ===
 if 'model' not in st.session_state:
@@ -35,20 +38,20 @@ if 'forecast_df' not in st.session_state:
 # === SIDEBAR ===
 st.sidebar.title("Model Controls")
 
-ticker = st.sidebar.text_input("Ticker Symbol", value="TCS.NS")
+ticker = st.sidebar.text_input("Ticker Symbol", value="MSFT")
 start_date = st.sidebar.date_input("📅 Start Date", value=pd.to_datetime("2015-01-01"))
-end_date = st.sidebar.date_input("📅 End Date", value=pd.to_datetime("2025-04-06"))
+end_date = st.sidebar.date_input("📅 End Date", value=date.today().strftime("%Y-%m-%d"))
 model_controller = st.sidebar.selectbox("🧠 Model Type", options=list(range(1, 9)), format_func=lambda x: {
     1: "LSTM", 2: "GRU", 3: "LSTM + XGBoost", 4: "GRU + XGBoost",
     5: "Bi-LSTM", 6: "Bi-GRU", 7: "Bi-LSTM + XGBoost", 8: "Bi-GRU + XGBoost"
 }[x])
-model_path = st.sidebar.text_input("Name of model",value="tcs_lstm.keras")
+model_path = st.sidebar.text_input("Name of model",value="msft_gru2.keras")
 trainable = st.sidebar.checkbox("Train Model (If not selected pretrained model will be used for prediction)", value=False)
 seq_len = st.sidebar.slider("Sequence Length", min_value=30, max_value=150, value=60,step=10)
 test_size = st.sidebar.slider("Test Size", min_value=0.01, max_value=0.9, value=0.2,step=0.05)
 plot_indicators = st.sidebar.multiselect("Indicators to Plot", ["Close", "EMA_20", "MACD", "RSI","Vix_Close","Support","Resistance"], default=["Close"])
 st.title("Stock Price Prediction & Trading Strategy")
-tab1,tab2,tab3,tab4 = st.tabs(["📊 Dashboard", "🎯 Accuracy Metrics","📈 Trading Simulation","🧭 Forecasting"])
+tab1,tab2,tab3,tab4,tab5 = st.tabs(["📊 Dashboard", "🎯 Accuracy Metrics","📈 Trading Simulation","📰 Sentiments","🧭 Forecasting"])
 if "scaled_data" not in st.session_state:
     st.session_state.scaled_data = 0
 # === FETCH AND PROCESS DATA ===
@@ -88,24 +91,149 @@ with tab1:
         set_all_seeds()
 
         # === PLACEHOLDER: Add data fetch logic ===
-        def fetch_stock_data(ticker: str, start_date: str, end_date: str):
+        def fetch_stock_data1(ticker: str, start_date: str, end_date: str):
 
             stock_data = yf.download(ticker, start=start_date, end=end_date)
             # stock_data1 = yf.download(ticker, start=start_date, end=end_date)
             return stock_data
+        
+        # Newly added code
+        def fetch_stock_data2(ticker: str, start_date: str, end_date: str):
+            for attempt in range(5):
+                try:
+                    return yf.download(ticker, start=start_date, end=end_date, progress=False)
+                except Exception as e:
+                    print(f"Error fetching {ticker}: {e}. Retry {attempt+1}/5...")
+                    time.sleep(1)
+            print(f"Failed after retries: {ticker}")
+            return None
+        
+
+        def fetch_stock_data3(ticker, start_date, end_date):
+            for attempt in range(5):
+                try:
+                    value = yf.Ticker(ticker).history(start=start_date, end=end_date)
+                    print(value)
+                    return value
+                except Exception as e:
+                    print(f"Error: {e}, retry {attempt+1}/5")
+                    time.sleep(1)
+            return None
+        
+
+        def fetch_stock_data(ticker, start_date, end_date):
+            for attempt in range(5):
+                try:
+                    data = yf.download(
+                        ticker, 
+                        start=start_date, 
+                        end=end_date,
+                        interval="1d",
+                        progress=False
+                    )
+                    if not data.empty:
+                        return data
+                    else:
+                        raise Exception("Empty response")
+                except Exception as e:
+                    print(f"Error: {e}. Retry {attempt+1}/5...")
+                    time.sleep(3)
+
+            print(f"Failed after retries: {ticker}")
+            return None
+
+
+
+
+        def fetch_alpha_vantage_range(symbol: str, start_date: str, end_date: str, api_key: str):
+            """
+            Fetch full Alpha Vantage daily data and filter by date range.
+            start_date & end_date format: 'YYYY-MM-DD'
+            """
+
+            url = "https://www.alphavantage.co/query"
+            params = {
+                "function": "TIME_SERIES_DAILY",
+                "symbol": symbol,
+                "outputsize": "full",      # IMPORTANT: full gives all 20+ years
+                "apikey": api_key
+            }
+
+            for attempt in range(5):  # retry loop
+                try:
+                    response = requests.get(url, params=params, timeout=10)
+                    data = response.json()
+
+                    # Rate limit
+                    if "Note" in data:
+                        print("Rate limited by Alpha Vantage. Waiting 60 seconds...")
+                        time.sleep(60)
+                        continue
+
+                    # API errors
+                    if "Error Message" in data:
+                        print("API Error:", data["Error Message"])
+                        return None
+
+                    ts = data.get("Time Series (Daily)")
+                    print(data)
+                    if ts is None:
+                        print("No time series data available.")
+                        return None
+
+                    # Convert JSON to DataFrame
+                    df = pd.DataFrame(ts).T
+                    df.index = pd.to_datetime(df.index)
+
+                    df = df.rename(columns={
+                        "1. open": "Open",
+                        "2. high": "High",
+                        "3. low": "Low",
+                        "4. close": "Close",
+                        "5. volume": "Volume"
+                    })
+
+                    # Convert types
+                    df = df.astype({
+                        "Open": float,
+                        "High": float,
+                        "Low": float,
+                        "Close": float,
+                        "Volume": float
+                    })
+
+                    # Sort oldest → newest
+                    df = df.sort_index()
+
+                    # 🔥 Filter date range
+                    df = df.loc[start_date:end_date]
+
+                    return df
+
+                except Exception as e:
+                    print(f"Attempt {attempt+1} failed: {e}")
+                    time.sleep(2)
+
+            print("Failed after max retries.")
+            return None
+
 
         def fetch_vix_data(start_date: str, end_date: str):
 
             vix_data = yf.download('^VIX', start=start_date, end=end_date)
             return vix_data
         # df = fetch_stock_data(ticker, str(start_date), str(end_date))
-        
-        data = fetch_stock_data(ticker, start_date, end_date)
-        data2 = fetch_vix_data(start_date, end_date)
 
-        df = pd.DataFrame(data)
-        df2 = pd.DataFrame(data2)
-        df["Vix_Close"]=df2["Close"]
+        Api_Key_Alpha_Vintage = "IGLXO3R0C3I1BI5F"
+        # Api_Key_Alpha_Vintage = "52F13IH6YQDWDJPE"
+        
+        # data = fetch_stock_data(ticker, start_date, end_date)
+        df = fetch_alpha_vantage_range(ticker,start_date,end_date,Api_Key_Alpha_Vintage)
+        # data2 = fetch_vix_data(start_date, end_date)
+
+        # df = pd.DataFrame(data)
+        # df2 = pd.DataFrame(data2)
+        # df["Vix_Close"]=df2["Close"]
         
 
         # === PLACEHOLDER: Add technical indicator calculations ===
@@ -343,7 +471,7 @@ with tab1:
         st.session_state.scaled_data=scaled_data
         scaled_2d = np.array(scaled_data)
         scaled_2d_label = np.array(scaled_data['Close'])
-        y =df['Close']
+        y =df[['Close']]
         scaled_close,closed_scaler=scale_data(y)
         # scaled_data, scaler = scale_data(df)
 
@@ -352,9 +480,7 @@ with tab1:
         corr_val = 'Close'
         # seq_len = 60
         Predictor = 'Close'
-        # test_size = 0.6
-        # model_controller = 2  # New model type (5 for Bi-LSTM, 6 for Bi-GRU)
-        # model_path = 'tcs.keras'
+      
 
         def create_sequences(data,Predictor, sequence_length=60):
 
@@ -511,29 +637,7 @@ with tab1:
             model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=50, batch_size=32, callbacks=[checkpoint],verbose=1)
 
 
-        # def train_xgboost_on_residuals(lstm_model, X_train, y_train, X_test, y_test,varient):
-
-        #     if varient == 1:
-        #         lstm_predictions_train = lstm_model.predict(X_train)
-        #         lstm_predictions_test = lstm_model.predict(X_test)
-        #         residuals_train = y_train - (lstm_predictions_train )
-        #         print(residuals_train.shape)
-        #         residuals_test = y_test - (lstm_predictions_test)
-
-        #     elif varient == 2:
-        #         gru_predictions_train = lstm_model.predict(X_train)
-        #         gru_predictions_test = lstm_model.predict(X_test)
-        #         residuals_train = y_train - (gru_predictions_train )
-        #         print(residuals_train.shape)
-        #         residuals_test = y_test - (gru_predictions_test)
-
-        #     # return residuals_train.shape,residuals_test.shape,y_train.shape,y_test.shape
-
-        #     xgb_model = build_xgboost_model()
-        #     xgb_model.fit(Xgb_train, residuals_train)
-        #     joblib.dump(xgb_model, 'xgb_model.pkl')  # Save the XGBoost model
-
-        #     return xgb_model, residuals_test
+      
         st.session_state.Xgb_test1 = X_test.reshape((X_test.shape[0], -1))
         def train_xgboost_on_residuals(lstm_model, X_train, y_train, X_test, y_test, variant):
   
@@ -646,12 +750,7 @@ with tab1:
             st.session_state.model = load_best_model(model_path)
             st.session_state.xgb_model= joblib.load('xgb_model.pkl')
 
-        # === PLACEHOLDER: Add model training/loading logic ===
-        # Use model_controller to build/train/load appropriate model
-        # Save model in st.session_state.model
-
-        # === PLACEHOLDER: Add evaluation and prediction logic ===
-        # mse, mae, r2, rmse, mape, predictions = evaluate_model(...)
+       
         def calculate_rmse(y_true, y_pred):
 
             return np.sqrt(mean_squared_error(y_true, y_pred))
@@ -678,26 +777,7 @@ with tab1:
 
             return min_error, max_error
 
-        # def evaluate_model(model, X_test, y_test, model_controller):
-
-        #     if model_controller in [1, 2, 5, 6]:
-        #         # Standard models without XGBoost
-        #         predictions = model.predict(X_test)
-        #     elif model_controller in [3, 4, 7, 8]:
-        #         # Hybrid models with XGBoost
-        #         predictions = model.predict(X_test) + st.session_state.xgb_model.predict(Xgb_test[-1:])
-
-        #     predictions1=inverse_scale_data(pd.DataFrame(predictions),closed_scaler)
-        #     y_test1=inverse_scale_data(pd.DataFrame(y_test),closed_scaler)
-
-        #     mse = mean_squared_error(y_test1, predictions1)
-        #     mae = mean_absolute_error(y_test1, predictions1)
-        #     r2 = r2_score(y_test1, predictions1)
-        #     rmse = calculate_rmse(y_test1, predictions1)
-        #     mape = calculate_mape(y_test1, predictions1)
-
-
-        #     return mse, mae, r2, rmse,mape,predictions
+       
 
 
         def evaluate_model(model, X_test, y_test, model_controller, xgb_model=None, Xgb_test=None):
@@ -734,8 +814,7 @@ with tab1:
             return mse, mae, r2, rmse, mape, hybrid_preds, min_error, max_error
 
 
-        # st.session_state.predictions = predictions
-        # st.session_state.metrics = ...
+       
         try:
             st.success("Model run complete. Check results below.") 
             if model_controller == 1:
@@ -796,6 +875,8 @@ with tab1:
 if st.session_state.metrics:
     st.subheader("Evaluation Metrics")
     st.write(st.session_state.metrics)
+
+
 with tab2:
 # === PLOT RESULTS ===
     if st.button("Directional Accuracy"):
@@ -816,10 +897,7 @@ with tab2:
             act=inverse_scale_data(k, closed_scaler)
             st.subheader("Test Data VS Model Prediction")
             fig, ax = plt.subplots()
-            # ax.plot(pre)
-            # ax.plot(act)
-            # ax.legend()
-            # st.pyplot(fig)
+            
             ax.plot(pre, label='Predicted')  # Add label
             ax.plot(act, label='Actual')     # Add label
 
@@ -881,13 +959,12 @@ with tab2:
                 }
 
                 st.write(f"Directional Accuracy: {accuracy:.2f}%")
-                # st.write(f"Up Days: {up_days} (Accuracy: {up_accuracy:.2f}%)")
-                # st.write(f"Down Days: {down_days} (Accuracy: {down_accuracy:.2f}%)")
+               
 
                 return accuracy, metrics
             scaled_data= st.session_state.scaled_data
             predictions = st.session_state.predictions
-            true = np.array(scaled_data["Close"])[-int(test_size * (len(scaled_data)-seq_len))-1:]
+            true = np.array(scaled_data[["Close"]])[-int(test_size * (len(scaled_data)-seq_len))-1:]
             st.session_state.true = true
 
 
@@ -896,13 +973,7 @@ with tab2:
             accuracy, metrics = directional_accuracy(true, predictions,horizon=1,threshold=0.01)
             st.subheader("Directional Accuracy For Next 20 Day")
             accuracy, metrics = directional_accuracy(true, predictions, horizon=20, threshold=0.01)
-        # === PLACEHOLDER: Add forecast_n_days_scaled() logic ===
-        # st.session_state.forecast_df = forecast_n_days_scaled(...)
-
-        # === PLACEHOLDER: Add plot_scaled_forecast() logic ===
-        # plot_scaled_forecast(...)
-
-        # st.info("Forecast plot displayed.")
+     
 
 with tab3:
     col1,col2 = st.columns(2)
@@ -913,16 +984,14 @@ with tab3:
         verbose = st.checkbox("Verbose",value=False)
     with col2:
         initial_capital = st.number_input("Your initial Capital",value=100000)
-        prediction_threshold = (st.slider("Prediction Threshold %",0.1,20.0,step=0.5,value=0.5))/100
+        prediction_threshold = (st.slider("Prediction Threshold %",0.1,20.0,step=0.5,value=0.5))/1000
         stoploss = (st.slider("Stoploss %",0.1,40.0,step=1.0,value=10.0))/100
         
    
     if st.button("Simulate Trading"):
         if st.session_state.ckecker==0 or st.session_state.ckecker2==0:
             st.error("First, Please run Model and Directional Accuracy")
-    # === PLACEHOLDER: simulate_trading_returns_for_daily_predictions_fixed(...) ===
-    # results = simulate_trading_returns(...)
-    # plot_trading_results_improved(results)
+   
         else:
             st.info("Trading simulation results plotted.")
             def simulate_trading_returns_for_daily_predictions_fixed(y_true, y_pred=0, prices=0,
@@ -961,9 +1030,11 @@ with tab3:
 
                 for i in range(len(y_pred) - 2):
 
-                    if y_pred[i] > y_true[i-1] + prediction_threshold:
+                    if y_pred[i] > y_pred[i-1] + prediction_threshold:
+                        # st.write(y_pred[i-1] + prediction_threshold)
                         signals[i] = 1
-                    elif y_pred[i] < y_true[i-1] - prediction_threshold:
+                    elif y_pred[i] < y_pred[i-1] - prediction_threshold:
+                        # st.write(y_pred[i-1] - prediction_threshold)
                         signals[i] = -1
 
                 log(f"Generated {np.sum(np.abs(signals) > 0)} trading signals ({np.sum(signals > 0)} buy, {np.sum(signals < 0)} sell)")
@@ -1197,6 +1268,9 @@ with tab3:
                         st.write(f"Total Trading Days: {len(prices)}")
 
                 return metrics
+
+
+           
         
 
             def split_time_series_array(series, ratio=1-test_size):
@@ -1436,6 +1510,7 @@ with tab3:
 
             def get_original_prices(scaled_values, scaler, column_idx=0):
 
+                scaled_values = scaled_values.flatten()
 
                 dummy = np.zeros((len(scaled_values), scaler.scale_.shape[0]))
 
@@ -1451,6 +1526,8 @@ with tab3:
             test_Date = st.session_state.test_Date
             true = st.session_state.true
             predictions = st.session_state.predictions
+
+            
             y_test = st.session_state.y_test
             original_y_true = get_original_prices(true, scaler, df.columns.get_loc('Close'))
             original_y_pred = get_original_prices(predictions, scaler, df.columns.get_loc('Close'))
@@ -1482,10 +1559,163 @@ with tab3:
 
             st.pyplot( plot_trading_results_improved(results,test_Date=test_Date))
 
-
+import requests
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
 
 with tab4:
-    n_days = st.number_input("No of days you want to see direction",min_value=5,max_value=30,value=10)
+    import requests
+    import torch
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    from collections import Counter
+    from datetime import date
+    import plotly.graph_objects as go
+
+    st.subheader("📰 Stock News Sentiment Dashboard")
+
+    if st.button("Get Sentiments"):
+        # Sidebar / user input
+        # stock = st.text_input("Enter Stock Symbol (e.g., AAPL, TSLA, ITC):", "AAPL").upper()
+        stock = ticker
+        # current_date = date.today().strftime("%Y-%m-%d")
+        current_date = end_date
+
+        # Load FinBERT model
+        @st.cache_resource
+        def load_model():
+            tokenizer = AutoTokenizer.from_pretrained("./finbert_local")
+            model = AutoModelForSequenceClassification.from_pretrained("./finbert_local")
+            labels = ["positive", "negative", "neutral"]  # ensure correct label order
+            return tokenizer, model, labels
+
+        tokenizer, model, labels = load_model()
+
+        # Fetch market news
+        api_token = "1wdBM7gpzQ2zUGPKzbGxIzDiSDo8ZOYHxLlFKySd"
+        url = (
+            f"https://api.marketaux.com/v1/news/all?"
+            f"symbols={stock}&filter_entities=true&language=en&published_on={current_date}&api_token={api_token}"
+        )
+
+        st.write(f"📅 Showing news for **{stock}** on {current_date}")
+        response = requests.get(url)
+        data = response.json()
+
+        if "data" not in data or len(data["data"]) == 0:
+            st.warning("No news found for this stock today.")
+        else:
+            results = []
+            for article in data["data"]:
+                text = article["title"] + ". " + article.get("description", "")
+                inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+                outputs = model(**inputs)
+                probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+                pred = torch.argmax(probs).item()
+                sentiment_label = labels[pred]
+                sentiment_score = probs[0][pred].item()
+
+                results.append({
+                    "title": article["title"],
+                    "description": article["description"],
+                    "sentiment": sentiment_label,
+                    "confidence": round(sentiment_score, 3),
+                    "source": article["source"],
+                    "url": article["url"]
+                })
+
+            # Newlly added code
+            sentiment_weight = {
+                "positive": 1,
+                "negative": -1,
+                "neutral": 0.15
+            }
+
+
+            weighted_sum = 0
+            total_confidence = 0
+
+            for r in results:
+                label = r["sentiment"].lower()
+                conf = r["confidence"]
+                weight = sentiment_weight[label]
+
+                weighted_sum += weight * conf
+                total_confidence += conf
+
+            # Avoid division by zero
+            overall_sentiment_score = weighted_sum / total_confidence if total_confidence > 0 else 0
+
+            # Round for neatness
+            overall_sentiment_score = round(overall_sentiment_score, 3)
+
+            if overall_sentiment_score not in st.session_state:
+                st.session_state.overall_sentiment_score = overall_sentiment_score
+
+
+            if overall_sentiment_score > 0.2:
+                final_label = "Bullish"
+            elif overall_sentiment_score < -0.2:
+                final_label = "Bearish"
+            else:
+                final_label = "Neutral"
+
+            # Sentiment summary
+            count = Counter([r["sentiment"] for r in results])
+            total = sum(count.values())
+            sentiment_summary = {k: round(v / total, 2) for k, v in count.items()}
+
+           
+
+            #Newlly added code
+            # Display weighted sentiment score
+            st.markdown("### 📊 Overall Sentiment Meter (Weighted by Confidence)")
+
+            gauge_value = overall_sentiment_score   # -1 to +1
+
+            # Convert -1..+1 → 0..100 for the gauge
+            meter_percentage = (gauge_value + 1) * 50
+
+
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=meter_percentage,
+                number={'suffix': "%"},
+                gauge={
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': "darkblue"},
+                    'steps': [
+                        {'range': [0, 33], 'color': "red"},
+                        {'range': [33, 66], 'color': "gray"},
+                        {'range': [66, 100], 'color': "green"},
+                    ],
+                },
+                title={'text': f"Sentiment: {final_label}"}
+            ))
+
+            st.plotly_chart(fig)
+
+
+            
+            st.markdown("### 🗞️ Recent News Articles")
+            for r in results:
+                color = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}[r["sentiment"]]
+                st.markdown(
+                    f"**{color} [{r['title']}]({r['url']})**  \n"
+                    f"{r['description']}  \n"
+                    f"**Sentiment:** {r['sentiment'].capitalize()} ({r['confidence']*100:.1f}% confidence)  \n"
+                    f"*Source:* {r['source']}"
+                )
+                st.divider()
+
+
+
+with tab5:
+    n_days = st.number_input("No of days you want to see direction",max_value=30,value=1)
+     
+    st.write("### Sentiment Components")
+    use_technical = st.toggle("Include Technical Sentiment", value=True)
+    use_news = st.toggle("Include News Sentiment", value=True)
+
     if st.button("Forecast"):
         if st.session_state.ckecker==0:
             st.error("Please first run The model")
@@ -1537,8 +1767,169 @@ with tab4:
                 result_df['Date'] = future_dates
                 result_df['Scaled_Prediction'] = scaled_predictions
 
+                # st.markdown("Hello")
+                st.markdown(result_df['Scaled_Prediction'])
+
+
                 return result_df
             
+
+            def predict_next_day_sentiment_old(model, scaled_data, index_values, seq_len=60, neutral_threshold=0.002):
+                """
+                Predicts the next day's price using the last `seq_len` data points
+                and compares it with today's price to infer sentiment:
+                    - Positive if next day price > today price
+                    - Negative if next day price < today price
+                    - Neutral if change within ±neutral_threshold (default 0.2%)
+                """
+
+                # --- Prepare last sequence ---
+                sequence = scaled_data.iloc[-seq_len:].values
+                close_idx = scaled_data.columns.get_loc('Close')
+
+                # --- Predict next day's price ---
+                x_input = sequence.reshape(1, seq_len, sequence.shape[1])
+                scaled_pred = float(model.predict(x_input, verbose=0)[0][0])
+
+                # --- Extract last (today's) scaled close price ---
+                scaled_today = float(scaled_data.iloc[-1, close_idx])
+
+                # --- Compute percentage change ---
+                pct_change = ((scaled_pred - scaled_today) / scaled_today) * 100
+
+                # --- Determine sentiment ---
+                if abs(pct_change) <= neutral_threshold * 100:
+                    sentiment = "Neutral"
+                elif scaled_pred > scaled_today:
+                    sentiment = "Positive"
+                else:
+                    sentiment = "Negative"
+
+                # --- Prepare result dataframe ---
+                next_date = index_values.iloc[-1, 0] + pd.Timedelta(days=1)
+                while next_date.weekday() >= 5:  # skip weekends
+                    next_date += pd.Timedelta(days=1)
+
+                result_df = pd.DataFrame({
+                    "Date": [next_date],
+                    "Scaled_Today": [scaled_today],
+                    "Scaled_Prediction": [scaled_pred],
+                    "Pct_Change": [pct_change],
+                    "Sentiment": [sentiment]
+                })
+
+                # --- Optional: display inside Streamlit ---
+                st.write("### Next Day Prediction Summary")
+                st.dataframe(result_df)
+
+                st.write(st.session_state.pos) #st.session_state.pos give value of positive sentiment from finbert that is feed with live news between 0 and 1 for negative and neutral use .neg and .neu
+
+                return result_df
+
+
+
+            #New function for total sentiments
+            def predict_next_day_sentiment(model, scaled_data, index_values, seq_len=60, neutral_threshold=0.002):
+               
+
+
+                close_idx = scaled_data.columns.get_loc('Close')
+
+                
+                sequence_today = scaled_data.iloc[-(seq_len+1):-1].values   # actual window until yesterday
+                x_today = sequence_today.reshape(1, seq_len, sequence_today.shape[1])
+
+                scaled_pred_today = float(model.predict(x_today, verbose=0)[0][0])
+
+             
+                sequence_next = scaled_data.iloc[-seq_len:].values          # actual window until today
+                x_next = sequence_next.reshape(1, seq_len, sequence_next.shape[1])
+
+                scaled_pred_next = float(model.predict(x_next, verbose=0)[0][0])
+
+                
+                diff = scaled_pred_next - scaled_pred_today
+                pct_change = (diff / abs(scaled_pred_today)) * 100  # relative % difference
+
+              
+                if abs(pct_change) <= neutral_threshold * 100:
+                    technical_sentiment_score = 0.04
+                    technical_sentiment = "Neutral"
+                elif diff > 0:
+                    technical_sentiment_score = float(np.tanh(pct_change *2))
+                    technical_sentiment = "Positive"
+                else:
+                    technical_sentiment_score = float(np.tanh((pct_change* 2)))
+                    technical_sentiment = "Negative"
+
+
+               
+                # Ensure session state values exist
+                pos = st.session_state.get("pos", 0)
+                neg = st.session_state.get("neg", 0)
+                neu = st.session_state.get("neu", 0)
+                news_sentiment_score = st.session_state.get("overall_sentiment_score")  # simple difference
+                if news_sentiment_score > 0.1:
+                    news_sentiment = "Positive"
+                elif news_sentiment_score < -0.1:
+                    news_sentiment = "Negative"
+                else:
+                    news_sentiment = "Neutral"
+
+                
+
+               
+
+                # --- Weighted combination logic ---
+                weights = {"technical": 0.6, "news": 0.4}
+
+                total_score = 0
+                total_weight = 0
+
+                if use_technical:
+                    total_score += weights["technical"] * technical_sentiment_score
+                    total_weight += weights["technical"]
+                if use_news:
+                    total_score += weights["news"] * news_sentiment_score
+                    total_weight += weights["news"]
+                
+
+                weighted_sentiment_score = total_score / total_weight if total_weight > 0 else 0
+
+                if weighted_sentiment_score > 0.05:
+                    total_sentiment = "Positive"
+                    recommendation = "Buy"
+                elif weighted_sentiment_score < -0.05:
+                    total_sentiment = "Negative"
+                    recommendation = "Sell"
+                else:
+                    total_sentiment = "Neutral"
+                    recommendation = "Hold"
+
+                # --- Prepare result dataframe ---
+                next_date = index_values.iloc[-1, 0] + pd.Timedelta(days=1)
+                while next_date.weekday() >= 5:  # skip weekends
+                    next_date += pd.Timedelta(days=1)
+
+                result_df = pd.DataFrame({
+                    "Date": [next_date],
+                    "Predicted Change (%)": [pct_change],
+                    "Technical Sentiment": [technical_sentiment],
+                    "Technical Score": [technical_sentiment_score],
+                    "News Sentiment": [news_sentiment],
+                    "News Score": [news_sentiment_score],
+                    "Total Sentiment": [total_sentiment],
+                    "Recommendation": [recommendation]
+                })
+
+                # --- Display results in Streamlit ---
+                st.write("### Sentiment Summary")
+                st.dataframe(result_df)
+
+                st.metric(label="Final Weighted Sentiment Score", value=f"{weighted_sentiment_score:.3f}")
+                st.success(f"**Recommendation:** {recommendation}")
+
+                return result_df
 
             import matplotlib.pyplot as plt
             import matplotlib.dates as mdates
@@ -1584,18 +1975,8 @@ with tab4:
             df = st.session_state.df
 
 
-            scaled_forecast = forecast_n_days_scaled(
-                
-                n_days=n_days,
-                seq_len=seq_len,
-                model=model,
-                scaled_data=scaled_data,  # Use the scaled DataFrame for prediction
-                index_values=index_values,  # DataFrame with the dates
-                
-                
-                )
-
-            plot_scaled_forecast(df, scaled_data, index_values, scaled_forecast)
+            scaled_forecast = predict_next_day_sentiment(model=model, scaled_data = scaled_data, index_values = index_values, seq_len=60, neutral_threshold=0.002)
+           
 # === NOTES ===
 st.markdown("#### 📌Developer's Note")
 st.code("""
