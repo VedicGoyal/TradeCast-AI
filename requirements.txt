@@ -10,3 +10,7 @@ yfinance
 ta
 joblib
 transformers
+torch
+requests
+date
+time
